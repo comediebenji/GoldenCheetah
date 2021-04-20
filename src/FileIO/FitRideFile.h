@@ -30,6 +30,11 @@ struct FitFileReader : public RideFileReader {
     bool writeRideFile(Context *context, const RideFile *ride, QFile &file) const;
     bool hasWrite() const { return true; }
 
+    // LAPS
+    mutable QList<RideFileInterval*> Laps_;
+    void write_lap(QByteArray *array, const RideFile *ride) const; // access to intervals
+    void sortLaps() const;
+
 };
 
 #endif // _FitRideFile_h

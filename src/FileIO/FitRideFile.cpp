@@ -329,7 +329,7 @@ struct FitFileReaderState
         if (manu == 1) {
             // Garmin
             // Product IDs can be found in c/fit_example.h in the FIT SDK.
-            // Multiple product IDs refer to different regions e.g. China, Japan etc. 
+            // Multiple product IDs refer to different regions e.g. China, Japan etc.
             switch (prod) {
                 case -1: return "Garmin";
                 case 16: case 20: return "Garmin Cadence Sensor 2";
@@ -1369,7 +1369,7 @@ struct FitFileReaderState
 
         if (local_timestamp < 0 || timestamp < 0)
             return;
-        
+
         if (0 == local_timestamp && 0 == timestamp)
             return;
 
@@ -1655,7 +1655,7 @@ struct FitFileReaderState
                 errors << QString("lap %1 is ignored (invalid end time)").arg(interval);
                 return;
             }
-        } 
+        }
 
         if (isLapSwim) {
             // Fill empty lengths due to false starts or pauses in some devices
@@ -3695,7 +3695,7 @@ void write_session(QByteArray *array, const RideFile *ride, QHash<QString,RideMe
     write_int32(array, value, true);
 
     // 6. sport
-    // Export as bike, run or swim, default sport is bike. 
+    // Export as bike, run or swim, default sport is bike.
     // todo: support all sports based on tag "Sport"
     int sport = ride->isRun() ? 1 : ride->isSwim() ? 5 : 2;
     write_int8(array, sport);
@@ -3716,7 +3716,7 @@ void write_session(QByteArray *array, const RideFile *ride, QHash<QString,RideMe
 
 }
 
-void write_lap(QByteArray *array, const RideFile *ride) {
+void FitFileReader::write_lap(QByteArray *array, const RideFile *ride) const {
     write_message_definition(array, LAP_MSG_NUM, 0, 6); // global_msg_num, local_msg_type, num_fields
 
     write_field_definition(array, 253, 4, 134); // timestamp (253)
@@ -3726,36 +3726,86 @@ void write_lap(QByteArray *array, const RideFile *ride) {
     write_field_definition(array, 2, 4, 134); // start_time (2)
     write_field_definition(array, 24, 1, 2); // trigger (24)
 
+    Laps_ = ride->intervals();
+    sortLaps();
 
-    // Record ------
-    int record_header = 0;
-    write_int8(array, record_header);
+    foreach (RideFileInterval *i, Laps_) {
+        if (i->stop > 0) {
+            // Record ------
+            int record_header = 0;
+            write_int8(array, record_header);
 
-    // 1. timestamp
-    int value = ride->startTime().toTime_t() - qbase_time.toTime_t();;
-    if (ride->dataPoints().count() > 0) {
-        value += ride->dataPoints().last()->secs+ride->recIntSecs();
+
+            // 1. timestamp
+            int stop_ = (int) std::round(i->stop  + ride->startTime().toTime_t() - qbase_time.toTime_t());
+            //if (ride->dataPoints().count() > 0) {
+            //    value += ride->dataPoints().last()->secs+ride->recIntSecs();
+            //}
+            write_int32(array, stop_, true);
+
+            // 2. message_index (254)
+            write_int16(array, 0, true);
+
+            // 3. event
+            int value = 9; // session=8, lap=9
+            write_int8(array, value);
+
+            // 4. event_type
+            value = 1; // stop_all=9, stop=1
+            write_int8(array, value);
+
+            // 5. start_time
+            int start_ = (int) std::round(stop_ - i->stop + i->start);
+            write_int32(array, start_, true);
+
+            // 6. trigger
+            value = 7; // session_end
+            write_int8(array, value);
+
+            // 7. Debug
+            qDebug() << "Start: " + QString::number(i->start) + " -> Stop:" + QString::number(i->stop);
+            qDebug() << "Start Timestamp: " + QString::number(start_) + " -> Stop Timestamp:" + QString::number(stop_);QString::number(start_);
+
+            // 8. Clear Laps
+            Laps_.clear();
+
+            /*
+             * The Fit export keeps intervals even the overlapping ones.
+             * However, intervals are sorted by "start" for use (at least a little) with Garmin Connect
+             * (the purpose of this export option I guess), even though there will be no overlaping anymore:
+             * they will be divided into small intervals instead.
+             * Garmin Connect creates its own intervals from "interval(i).start" to "interval(i+1).start-1"
+             * %% Exemple 1 - Sorted Fit Lap Timestamps:
+             * Lap 1 -> Start Timestamp: 987076431 -> Stop Timestamp:987076434 - 4s
+             * Lap 2 -> Start Timestamp: 987076433 -> Stop Timestamp:987076435 - 3s (2s overlap)
+             * Lap 3 -> Start Timestamp: 987076434 -> Stop Timestamp:987076436 - 3s (2s overlap)
+             * Lap 4 -> Start Timestamp: 987076437 -> Stop Timestamp:987076440 - 4s
+             * | |                                                       total - 14s-4s = 10s
+             * | |
+             *  V
+             * Garmin Connect Laps:
+             * Lap G1 -> Start Timestamp: 987076431 -> Stop Timestamp:987076432 - 2s
+             * Lap G2 -> Start Timestamp: 987076433 -> Stop Timestamp:987076433 - 1s
+             * Lap G3 -> Start Timestamp: 987076434 -> Stop Timestamp:987076436 - 3s
+             * Lap G4 -> Start Timestamp: 987076437 -> Stop Timestamp:987076440 - 4s
+             *                                                            total - 10s
+             * %% Exemple 2 - Unsorted Fit Lap Timestamps:
+             * Lap 1 -> Start Timestamp: 987076431 -> Stop Timestamp:987076434
+             * Lap 3 -> Start Timestamp: 987076434 -> Stop Timestamp:987076436
+             * Lap 4 -> Start Timestamp: 987076437 -> Stop Timestamp:987076440
+             * Lap 2 -> Start Timestamp: 987076433 -> Stop Timestamp:987076435
+             * | |
+             * | |
+             *  V
+             * Garmin Connect Laps:
+             * Lap G1 -> Start Timestamp: 987076431 -> Stop Timestamp:987076433 - 3s
+             * Lap G2 -> Start Timestamp: 987076434 -> Stop Timestamp:987076436 - 3s
+             * Lap G3 -> Start Timestamp: 987076437 -> Stop Timestamp:987076440 - 4s
+             *                                                            total - 10s
+             *  The Lasp 2 is just ignored in fine.
+             */
+        }
     }
-    write_int32(array, value, true);
-
-    // 2. message_index (254)
-    write_int16(array, 0, true);
-
-    // 3. event
-    value = 9; // session=8, lap=9
-    write_int8(array, value);
-
-    // 4. event_type
-    value = 1; // stop_all=9, stop=1
-    write_int8(array, value);
-
-    // 5. start_time
-    value = ride->startTime().toTime_t() - qbase_time.toTime_t();;
-    write_int32(array, value, true);
-
-    // 6. trigger
-    value = 7; // session_end
-    write_int8(array, value);
 
 }
 
@@ -4032,7 +4082,7 @@ FitFileReader::toByteArray(Context *context, const RideFile *ride, bool withAlt,
     write_file_id(&data, ride); // file_id 0
     write_file_creator(&data); // file_creator 49
     write_start_event(&data, ride); // event 21 (x15)
-    write_record(&data, ride, withAlt, withWatts, withHr, withCad); // record 20 (x14)  
+    write_record(&data, ride, withAlt, withWatts, withHr, withCad); // record 20 (x14)
     write_lap(&data, ride); // lap 19 (x11)
     write_stop_event(&data, ride); // event 21 (x15)
     write_session(&data, ride, computed); // session 18 (x12)
@@ -4061,6 +4111,12 @@ FitFileReader::writeRideFile(Context *context, const RideFile *ride, QFile &file
     return(true);
 }
 
-
+void FitFileReader::sortLaps() const
+{
+        if (Laps_.count()) {
+            // Sort laps by start
+            std::sort(Laps_.begin(), Laps_.end(), [](const RideFileInterval* a, const RideFileInterval* b) {return a->start < b->start;});
+        }
+}
 
 

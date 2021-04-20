@@ -173,6 +173,7 @@ class RideFile : public QObject // QObject to emit signals
         // file format writers have more access
         friend class RideFileFactory;
         friend struct FitlogFileReader;
+        friend struct FitFileReader;// access to intervals
         friend struct GcFileReader;
         friend class TcxFileReader;
         friend struct PwxFileReader;
